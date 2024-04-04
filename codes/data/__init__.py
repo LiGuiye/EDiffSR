@@ -56,6 +56,9 @@ def create_dataset(dataset_opt):
     elif mode == 'BokehLQ':
         from data.BokehLQ_dataset import BokehLQDataset as D
         dataset = D(dataset_opt)
+    elif mode == "Climate":
+        from data.Climate_dataset import Climate_dataset as D
+        dataset = D(dataset_opt)
     else:
         raise NotImplementedError("Dataset [{:s}] is not recognized.".format(mode))
 
