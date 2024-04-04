@@ -36,7 +36,7 @@ def mask_to(tensor, mask_root='data/datasets/gt_keep_masks/genhalf', mask_id=-1,
 ######## super-resolution ###########
 
 def upscale(tensor, scale=4, mode='bicubic'):
-    tensor = F.interpolate(tensor, scale_factor=scale, mode=mode)
+    tensor = F.interpolate(tensor, scale_factor=scale, mode=mode, align_corners=True)
     return tensor
 
 
