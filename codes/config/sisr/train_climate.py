@@ -2,16 +2,11 @@ import argparse
 import logging
 import math
 import os
-import random
 import sys
-import copy
-
-import cv2
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-# from IPython import embed
 
 import options as option
 from models import create_model
@@ -20,11 +15,17 @@ sys.path.insert(0, "../../")
 import utils as util
 from data import create_dataloader, create_dataset
 from data.data_sampler import DistIterSampler
+from data.Climate_dataset import normalize
 
-from data.util import bgr2ycbcr
+
+def tensor2img(tensor, original_mean, original_std):
+    tensor = normalize(tensor, original_mean, original_std, inverse=True)
+    tensor = (tensor - tensor.min())/(tensor.max()-tensor.min())
+    img_np = (tensor * 255.0).round().cpu().numpy()
+    return img_np.astype(np.uint8)
+
 
 # torch.autograd.set_detect_anomaly(True)
-import matplotlib.pyplot as plt
 def init_dist(backend="nccl", **kwargs):
     """ initialization for distributed training"""
     # if mp.get_start_method(allow_none=True) is None:
@@ -43,7 +44,7 @@ def init_dist(backend="nccl", **kwargs):
 def main():
     #### setup options of three networks
     parser = argparse.ArgumentParser()
-    parser.add_argument("-opt", type=str, default="D:/EDiffSR/codes/config/sisr/options/setting.yml")
+    parser.add_argument("-opt", type=str, default="options/train/setting_climate.yml")
     parser.add_argument(
         "--launcher", choices=["none", "pytorch"], default="none", help="job launcher"  # none means disabled distributed training
     )
@@ -140,7 +141,7 @@ def main():
                         version
                     )
                 )
-                from tensorboardX import SummaryWriter
+                from torch.utils.tensorboard import SummaryWriter
             tb_logger = SummaryWriter(log_dir="log/{}/tb_logger/".format(opt["name"]))
     else:
         util.setup_logger(
@@ -193,7 +194,7 @@ def main():
     assert val_loader is not None
 
     #### create model
-    model = create_model(opt) 
+    model = create_model(opt)
     device = model.device
 
     #### resume training
@@ -272,25 +273,27 @@ def main():
                 idx = 0
                 for _, val_data in enumerate(val_loader):
 
-                    LQ, GT = val_data["LQ"], val_data["GT"]
+                    LQ, GT = val_data["LQ"], val_data["GT"] # NCHW
                     LQ = util.upscale(LQ, scale)
                     noisy_state = sde.noise_state(LQ)  # 在LR上加噪声，得到噪声LR图，噪声是随机生成的
 
                     # valid Predictor
                     model.feed_data(noisy_state, LQ, GT)
                     model.test(sde)
-                    visuals = model.get_current_visuals()
+                    visuals = model.get_current_visuals() # CHW
 
-                    output = util.tensor2img(visuals["Output"].squeeze())  # uint8
-                    gt_img = util.tensor2img(visuals["GT"].squeeze())  # uint8
+                    output = tensor2img(visuals["Output"].squeeze(), train_set.entire_mean, train_set.entire_std)  # uint8
+                    gt_img = tensor2img(visuals["GT"].squeeze(), train_set.entire_mean, train_set.entire_std)  # uint8
 
                     # save the validation results
                     save_path = str(opt["path"]["experiments_root"]) + '/val_images/' + str(current_step)
                     util.mkdirs(save_path)
-                    save_name = save_path + '/'+'{0:03d}'.format(idx) + '.png'
-                    util.save_img(output, save_name)
 
-                    # calculate PSNR
+                    for c in range(opt["network_G"]["setting"]["img_channel"]):
+                        save_name = save_path + '/'+'{0:03d}'.format(idx) + '_'+str(c)+'.png'
+                        util.save_img(output[c], save_name)
+
+                    # calculate PSNR (0-255)
                     avg_psnr += util.calculate_psnr(output, gt_img)
                     idx += 1
 
