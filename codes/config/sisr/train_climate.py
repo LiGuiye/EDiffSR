@@ -222,13 +222,8 @@ def main():
         "Start training from epoch: {:d}, iter: {:d}".format(start_epoch, current_step)
     )
 
-    best_psnr = 0.0
-    best_iter = 0
     error = mp.Value('b', False)
 
-    # -------------------------------------------------------------------------
-    # -------------------------正式开始训练，前面都是废话---------------------------
-    # -------------------------------------------------------------------------
     for epoch in range(start_epoch, total_epochs + 1):
         if opt["dist"]:
             train_sampler.set_epoch(epoch)
@@ -267,57 +262,6 @@ def main():
                 if rank <= 0:
                     logger.info(message)
 
-            # validation, to produce ker_map_list(fake)
-            if current_step % opt["train"]["val_freq"] == 0 and rank <= 0:
-                avg_psnr = 0.0
-                idx = 0
-                for _, val_data in enumerate(val_loader):
-
-                    LQ, GT = val_data["LQ"], val_data["GT"] # NCHW
-                    LQ = util.upscale(LQ, scale)
-                    noisy_state = sde.noise_state(LQ)  # 在LR上加噪声，得到噪声LR图，噪声是随机生成的
-
-                    # valid Predictor
-                    model.feed_data(noisy_state, LQ, GT)
-                    model.test(sde)
-                    visuals = model.get_current_visuals() # CHW
-
-                    output = tensor2img(visuals["Output"].squeeze(), train_set.entire_mean, train_set.entire_std)  # uint8
-                    gt_img = tensor2img(visuals["GT"].squeeze(), train_set.entire_mean, train_set.entire_std)  # uint8
-
-                    # save the validation results
-                    save_path = str(opt["path"]["experiments_root"]) + '/val_images/' + str(current_step)
-                    util.mkdirs(save_path)
-
-                    for c in range(opt["network_G"]["setting"]["img_channel"]):
-                        save_name = save_path + '/'+'{0:03d}'.format(idx) + '_'+str(c)+'.png'
-                        util.save_img(output[c], save_name)
-
-                    # calculate PSNR (0-255)
-                    avg_psnr += util.calculate_psnr(output, gt_img)
-                    idx += 1
-
-                avg_psnr = avg_psnr / idx
-
-                if avg_psnr > best_psnr:
-                    best_psnr = avg_psnr
-                    best_iter = current_step
-
-                # log
-                logger.info("# Validation # PSNR: {:.6f}, Best PSNR: {:.6f}| Iter: {}".format(avg_psnr, best_psnr, best_iter))
-                logger_val = logging.getLogger("val")  # validation logger
-                logger_val.info(
-                    "<epoch:{:3d}, iter:{:8,d}, psnr: {:.6f}".format(
-                        epoch, current_step, avg_psnr
-                    )
-                )
-                print("<epoch:{:3d}, iter:{:8,d}, psnr: {:.6f}".format(
-                        epoch, current_step, avg_psnr
-                    ))
-                # tensorboard logger
-                if opt["use_tb_logger"] and "debug" not in opt["name"]:
-                    tb_logger.add_scalar("psnr", avg_psnr, current_step)
-
             if error.value:
                 sys.exit(0)
             #### save models and training states
@@ -331,7 +275,8 @@ def main():
         logger.info("Saving the final model.")
         model.save("latest")
         logger.info("End of Predictor and Corrector training.")
-    tb_logger.close()
+    if opt["use_tb_logger"]:
+        tb_logger.close()
 
 
 if __name__ == "__main__":
